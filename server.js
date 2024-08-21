@@ -1,21 +1,39 @@
-import express from 'express';
-import fs from 'fs';
-import dotenv from 'dotenv';
+import express from "express";
+import fs from "fs";
+import dotenv from "dotenv";
 
-import backRouter from './backend/backendRouter.js';
-import commiteeRouter from './backend/commiteeRouter.js';
+import backRouter from "./backend/backendRouter.js";
+import commiteeRouter from "./backend/commiteeRouter.js";
+import adminRouter from "./backend/adminRouter.js";
+import passport from "passport";
+import OAuth2Strategy from "passport-oauth2";
 
 dotenv.config();
-
 
 const port = process.env.PORT || 3000;
 
 const app = express();
 
-// Serve static files from the 'public' folder
-app.use(express.static('public'));
-app.use(express.json());
+passport.use(
+  new OAuth2Strategy(
+    {
+      authorizationURL: "https://auth.chalmers.it/oauth2/authorize",
+      tokenURL: "https://auth.chalmers.it/oauth2/token",
+      clientID: process.env.CLIENT_ID,
+      clientSecret: process.env.CLIENT_SECRET,
+      callbackURL: "http://localhost:3000/auth/callback",
+    },
+    function (accessToken, refreshToken, profile, cb) {
+      User.findOrCreate({ exampleId: profile.id }, function (err, user) {
+        return cb(err, user);
+      });
+    }
+  )
+);
 
+// Serve static files from the 'public' folder
+app.use(express.static("public"));
+app.use(express.json());
 
 const dataFolderPath = "data/";
 export const pathToCommiteeFile = dataFolderPath + "commitee.json";
@@ -28,53 +46,69 @@ export const pathToPatetosFile = dataFolderPath + "patetos.json";
 export const pathToCredentialsFile = dataFolderPath + "credentials.json";
 const pathToAdminkeysFile = dataFolderPath + "adminKeys.json";
 
-
 const adminKeysLifeTime = 10 * 24 * 60 * 60 * 1000; // 10 days in milliseconds
 
 // UPLOAD NEW POST
-app.use('/api', backRouter)
-app.use('/api/commitee', commiteeRouter)
-
-
+app.use("/api", backRouter);
+app.use(
+  "/api/admin",
+  passport.authenticate("oauth2", { failureRedirect: "/error" }),
+  adminRouter
+);
+app.use("/api/commitee", commiteeRouter);
+app.get("/error", (req, res) => {
+  res.status(403).send("Error logging in");
+});
 
 export async function initialize_files(directories, files) {
   directories.forEach((path) => {
-      if (!fs.existsSync(path)) {
-          fs.mkdirSync(path);
-      }
+    if (!fs.existsSync(path)) {
+      fs.mkdirSync(path);
+    }
   });
 
   files.forEach((path) => {
-      if (!fs.existsSync(path)) {
-          fs.writeFileSync(path, JSON.stringify([], null, 2));
-      }
+    if (!fs.existsSync(path)) {
+      fs.writeFileSync(path, JSON.stringify([], null, 2));
+    }
   });
 }
 
-initialize_files([dataFolderPath, pathToPatetosImages, pathToPostImages], [pathToPostsFile, pathToPatetosFile, pathToCredentialsFile, pathToAdminkeysFile]);
-
-
+initialize_files(
+  [dataFolderPath, pathToPatetosImages, pathToPostImages],
+  [
+    pathToPostsFile,
+    pathToPatetosFile,
+    pathToCredentialsFile,
+    pathToAdminkeysFile,
+  ]
+);
 
 // LOGIN SYSTEM
-app.post('/login', (req, res) => {
-  removeUnvalidAdminKeys();
-  
+app.post(
+  "/login",
+  passport.authenticate("oauth2", { failureRedirect: "/error" }),
+  (req, res) => res.redirect("/")
+);
+/* , (req, res) => {
   const username = req.body.username; // Extract username from request body
   const password = req.body.password; // Extract password from request body
-  console.log('Username:', username);
-  console.log('Password:', password);
+  console.log("Username:", username);
+  console.log("Password:", password);
 
   if (credentialsIsValid(username, password)) {
-    let adminKey = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    let adminKey =
+      Math.random().toString(36).substring(2, 15) +
+      Math.random().toString(36).substring(2, 15);
     saveAdminKey(adminKey, username);
-    console.log('Admin key:', adminKey);
+    console.log("Admin key:", adminKey);
     res.status(200).json({ adminKey }); // Send the content back to the client
   } else {
-    res.status(401).json({ error: 'Invalid credentials' });
+    res.status(401).json({ error: "Invalid credentials" });
   }
 });
-
-app.post('/testAdminKey', (req, res) => {
+ */
+app.post("/testAdminKey", (req, res) => {
   const adminKey = req.body.adminKey; // Extract admin key from request body
   if (isAdminKeyValid(adminKey)) {
     res.status(200).json("Adminkey is valid");
@@ -90,11 +124,10 @@ function getCredentials() {
 
 function getAdminKeys() {
   if (fs.existsSync(pathToAdminkeysFile)) {
-    const adminKeys = fs.readFileSync(pathToAdminkeysFile, 'utf8');
+    const adminKeys = fs.readFileSync(pathToAdminkeysFile, "utf8");
     return JSON.parse(adminKeys);
-  }
-  else {
-    throw new Error('Adminkeys file not found');
+  } else {
+    throw new Error("Adminkeys file not found");
   }
 }
 
@@ -102,7 +135,7 @@ function credentialsIsValid(username, pass) {
   const userCredentials = getCredentials();
   for (const user of userCredentials) {
     if (user.name === username && user.password === pass) {
-      console.log('User:', user.name, "pass:", user.password);
+      console.log("User:", user.name, "pass:", user.password);
       return true;
     }
   }
@@ -111,9 +144,9 @@ function credentialsIsValid(username, pass) {
 
 export function getUsernameFromAdminKey(adminKey) {
   let adminKeys = getAdminKeys();
-  adminKeys.forEach(key => {
-    if (key.key === adminKey){
-      return key.username
+  adminKeys.forEach((key) => {
+    if (key.key === adminKey) {
+      return key.username;
     }
   });
 }
@@ -134,13 +167,13 @@ function saveAdminKey(adminKey, username) {
 
 export function isAdminKeyValid(adminKey) {
   const currentDate = new Date();
-  const tenDaysAgo = new Date(currentDate.getTime() - (adminKeysLifeTime));
+  const tenDaysAgo = new Date(currentDate.getTime() - adminKeysLifeTime);
   const adminKeys = getAdminKeys();
 
   // Find the admin key in the adminKeys array
-  const adminKeyData = adminKeys.find(keyData => keyData.key === adminKey);
+  const adminKeyData = adminKeys.find((keyData) => keyData.key === adminKey);
   if (!adminKeyData) {
-      return false; // Admin key not found
+    return false; // Admin key not found
   }
 
   // Parse the saved date and compare it with ten days ago
@@ -148,13 +181,12 @@ export function isAdminKeyValid(adminKey) {
   return savedDate >= tenDaysAgo;
 }
 
-
 function removeUnvalidAdminKeys() {
   const currentDate = new Date();
-  const tenDaysAgo = new Date(currentDate.getTime() - (adminKeysLifeTime));
+  const tenDaysAgo = new Date(currentDate.getTime() - adminKeysLifeTime);
   let adminKeys = getAdminKeys();
 
-  adminKeys = adminKeys.filter(keyData => {
+  adminKeys = adminKeys.filter((keyData) => {
     const savedDate = new Date(keyData.date);
     return savedDate >= tenDaysAgo;
   });
@@ -162,33 +194,34 @@ function removeUnvalidAdminKeys() {
   fs.writeFileSync(pathToAdminkeysFile, JSON.stringify(adminKeys, null, 2));
 }
 
-backRouter.post('/updateUserCredentials', (req, res) => {
-	if (!isAdminKeyValid(req.body.adminKey)) return res.status(403).send("Adminkey not valid");
+backRouter.post("/updateUserCredentials", (req, res) => {
+  if (!isAdminKeyValid(req.body.adminKey))
+    return res.status(403).send("Adminkey not valid");
 
-	const newUsername = req.body.username;
-	const newPassword = req.body.password;
+  const newUsername = req.body.username;
+  const newPassword = req.body.password;
 
-	let adminKeys = fs.readFileSync(pathToAdminkeysFile);
+  let adminKeys = fs.readFileSync(pathToAdminkeysFile);
   adminKeys = JSON.parse(adminKeys);
-  adminKeys.filter(keyData => keyData.key !== req.body.adminKey);
+  adminKeys.filter((keyData) => keyData.key !== req.body.adminKey);
   fs.writeFileSync(pathToAdminkeysFile, JSON.stringify(adminKeys, null, 2));
-  
+
   let credentials = fs.readFileSync(pathToCredentialsFile);
-	credentials = JSON.parse(credentials);
+  credentials = JSON.parse(credentials);
 
   try {
-    credentials.find(user => user.name === getUsernameFromAdminKey()).password = newPassword;
-    credentials.find(user => user.name === getUsernameFromAdminKey).username = newUsername;
+    credentials.find(
+      (user) => user.name === getUsernameFromAdminKey()
+    ).password = newPassword;
+    credentials.find((user) => user.name === getUsernameFromAdminKey).username =
+      newUsername;
   } catch (error) {
     return res.status(404).send("User not found");
   }
 
-
-	fs.writeFileSync(pathToCredentialsFile, JSON.stringify(credentials, null, 2));
-	res.send(200).send("Credentials updated successfully!");
+  fs.writeFileSync(pathToCredentialsFile, JSON.stringify(credentials, null, 2));
+  res.send(200).send("Credentials updated successfully!");
 });
-
-
 
 // Start the server
 app.listen(port, () => {
